@@ -10,6 +10,228 @@ import datetime
 import os
 
 
+
+
+class Effective_thickness_lib:
+    def __init__(self):
+        '''
+        To calculate the effective thickness of SWS coming from RCWA result
+        This assumes to start from Jones matrix calculated by RCWA
+        Here I just put the constant value in the init
+        
+        Example code is here:
+        
+        # Load file
+        f18 = 'Data/Carbide18_cryo_teff_Carbide18_teff.npz'
+        f19 = 'Data/Carbide19_cryo_teff2_Carbide19_teff2.npz'
+        npz18 = np.load(f18)
+        npz19 = np.load(f19)
+        
+        # Frequency [Hz] and jones materix
+        freq = npz18['freq']*1e+9
+        j18 = npz18['j']
+        j19 = npz19['j']
+        
+        # Refractive index (no, ne depend on deffinition in RCWA)
+        no = 3.361
+        ne = 3.047
+        
+        # thickness of bulk [m]
+        t_plate = 5e-3
+
+        # Load this library
+        lib = Effective_thickness_lib()
+
+        # Calculate effective thickness
+        res18 = lib.Calculate_effective_thickness(j18,freq,no,ne,t_plate)
+        res19 = lib.Calculate_effective_thickness(j19,freq,no,ne,t_plate)
+        
+        # gather results for the plot
+        freq_arr = np.array([res18[0],res19[0]])
+        res_arr = np.array([res18[1],res19[1]])
+        col_arr = ['b','r']
+        lab_arr = ['Carbide 18', 'Carbide 19']
+        ylim = [1.8,2.5]
+        
+        # Save filename
+        save_file = './Data/Effective_thickness/Carbide1819_teff2.png'
+
+        # Plot result
+        lib.Plot_result(freq_arr,res_arr,col_arr,lab_arr,ylim,save_file)
+
+        # Save data as npz file
+        save_npz18 = './Data/Effective_thickness/Carbide18_teff2.png'
+        save_npz19 = './Data/Effective_thickness/Carbide19_teff2.png'
+        lib.Save_data_as_npz(res18,save_npz18)
+        lib.Save_data_as_npz(res19,save_npz19)
+        '''
+        self.c = 2.9979e+08
+
+    def Phase_diff(self,J):
+        '''
+        Calculate phase difference based on following equation:
+        Delta phi = arctan(J00_imag/J00_real) - arctan(J11_imag/J11_real)
+        
+        Input: 
+            - Jones matrix: I assume jarr(v) = [j00,j01,j10,j11], numpy array
+        return 
+            - Delta phi (v) numpy array
+        '''
+        return  np.arctan(np.imag(J[0])/np.real(J[0])) - np.arctan(np.imag(J[3])/np.real(J[3]))
+
+    def Calculate_phase_diff_unit(self,freq,no,ne):
+        '''
+        Calculate phase difference per 1 m (Then we can multiply it with respect to the actual thickness)
+        
+        Input:
+            - freq: Frequency [Hz], numpy array
+            - no: Refractive index of the ordinary ray axis, single value
+            - ne: Refractive index of the extraordinary ray axis, single value
+        Return:
+            - phase different per 1 m, numpy array
+        '''
+        phase_diff_per_m = 2*np.pi*(ne-no)*freq/self.c
+        return phase_diff_per_m
+    
+    def phase_adjust(self,p):#rad
+        '''
+        Adjust the phase between -pi and pi, and remove gap along the phase curve
+        
+        Input:
+            - p: input phase, numpy array
+        Return:
+            - p: adjusted phase, numpy array
+        '''
+        priod=np.pi
+        for i in range(1,len(p)):
+            while(p[i]>priod):p[i]=p[i]-priod
+            while(p[i]<0.):p[i]=p[i]+priod
+        return np.array(p)
+    
+    def thickness_adjust(self,t,t_priod):#rad
+        '''
+        Adjust the thickness for the reasonable thickness. need t_period
+        
+        Input:
+            - t: input thickness from rcwa, numpy array
+            - t_period: period thickness, numpy array
+        Return:
+            - t: adjusted thickness, numpy array
+        '''
+        for i in range(0,len(t)):
+            while(t[i]>t_priod[i]):t[i]=t[i]-t_priod[i]
+            while(t[i]<1.9e-3):t[i]=t[i]+t_priod[i]
+        return np.array(t)
+    
+    def Calculate_effective_thickness(self,J,freq,no,ne,t_plate):
+        '''
+        Calculate the effective thickness from given Jones matrix from RCWA. assuming SWS on both sides so need to be multiplied by 2 if the assumption is one side SWS
+        
+        Input: 
+            - J: jones matrix from rcwa, numpy array
+            - freq: Frequency [Hz], numpy array
+            - no: Refractive index of the ordinary ray axis, single value
+            - ne: Refractive index of the extraordinary ray axis, single value
+            - t_plate: thickness of bulk [m], single value
+        Return:
+            - freq: Frequency [GHz], numpy array
+            - t_eff_ar: Effective thickness of SWS [mm], numpy array
+            - phase_diff_per_m: phase difference per 1 m [rad], numpy array
+            - period_thickness: period thickness [m], numpy array
+            - phase_diff_plate: phase difference coming from bulk [mm], numpy array
+            - phase_diff_rcwa: phase difference coming from bulk and SWS [rad], numpy array
+            - phase_diff_ar: phase difference coming from SWS [rad], numpy array
+            - t_eff: effective thickness before adjusting [mm], numpy array
+        '''
+        # Phase difference per thickness for given frequency 
+        phase_diff_per_m = self.Calculate_phase_diff_unit(freq,no,ne)
+        
+        # Thickness to be HWP in m = 1for given frequency
+        period_thickness = np.abs(np.pi/phase_diff_per_m)
+        
+        # Retardance in the plate without ARC part
+        phase_diff_plate = t_plate*phase_diff_per_m
+        
+        # Retardance in the whole component, including AR on both sides and bulk
+        phase_diff_rcwa = self.Phase_diff(J)
+        
+        # Pick up Retardance in AR on both sides (remove bulk part) and adjust it
+        phase_diff_ar = self.phase_adjust(phase_diff_rcwa-phase_diff_plate)
+        
+        # Calculate the effective thickness for both sides
+        t_eff = phase_diff_ar/phase_diff_per_m
+        
+        # Adjust the effective thickness to the reasonable value and devided by 2 to only show one side AR
+        t_eff_ar = 0.5 * self.thickness_adjust(t_eff,period_thickness)
+        
+        return freq*1e-9,t_eff_ar*1e+3,phase_diff_per_m,period_thickness*1e+3,phase_diff_plate,phase_diff_rcwa,phase_diff_ar,t_eff*1e+3
+    
+    def Plot_result(self,freq_arr,res_arr,col_arr,lab_arr,ylim,save_file):
+        '''
+        Plot effective thickness
+        
+        Input:
+            - freq_arr: frequency [GHz] (all cases), numpy array
+            - res_arr: effective thickness (all cases) [mm], numpy array
+            - col_arr: plot color array, list
+            - lab_arr: plot label array, list
+            - ylim: plot ylimit, list or numpy array ([ymin,ymax])
+            - save_file: save filename, string
+        Return:
+        '''
+        
+        fig = plt.figure(figsize = (7,5))
+        
+        ax = fig.add_subplot(111)
+        
+        for i in range(0,len(res_arr)):
+            ax.plot(freq_arr[i],res_arr[i],col_arr[i],label = lab_arr[i])
+        
+        ax.set_xlabel('Frequency [GHz]',fontsize = 15)
+        ax.set_ylabel(r'Effective thickness $t_{eff}$ [mm]',fontsize = 15)
+        ax.set_ylim(ylim[0],ylim[1])
+        ax.tick_params(labelsize = 13)
+        ax.grid()
+        ax.legend()
+        fig.tight_layout()
+        
+        plt.savefig(save_file,dpi = 300)
+        
+        
+        
+        
+    def Save_data_as_npz(self,res,save_npz):
+        '''
+        Save result as npz
+        Input:
+            - res: result coming from Calculate_effective_thickness(self,J,freq,no,ne,t_plate), numpy array
+            - save_npz: save filename, string
+        Return:
+        '''
+        
+        memo = ['freq: Frequency [GHz], numpy array', 
+                't_eff_ar: Effective thickness of SWS [mm], numpy array',
+                'phase_diff_per_m: phase difference per 1 m [rad], numpy array',
+                'period_thickness: period thickness [m], numpy array',
+                'phase_diff_plate: phase difference coming from bulk [mm], numpy array',
+                'phase_diff_rcwa: phase difference coming from bulk and SWS [rad], numpy array',
+                'phase_diff_ar: phase difference coming from SWS [rad], numpy array', 
+                't_eff: effective thickness before adjusting [mm], numpy array']
+        
+        np.savez(save_npz,
+                 freq = res[0], 
+                 t_eff_arr = res[1],
+                 phase_diff_per_m = res[2], 
+                 period_thickness = res[3], 
+                 phase_diff_plate = res[4], 
+                 phase_diff_rcwa = res[5],
+                 phase_diff_ar = res[6], 
+                 t_eff = res[7], memo = memo)
+
+
+
+
+
 def Laser_history(end):
     """
     Plot the history of our laser machine
