@@ -11,6 +11,50 @@ import os
 
 
 
+class Material:    
+    def __init__(self):
+        '''
+        2024.2.20 (RTakaku)
+        Now I follow Tensei's thesis and just focus on the strength as the window.
+        Here I refer his document in terms of mechanical strength. 
+        Later I will add formalism for thickness calculation.
+        When we consider the thickness, we will care about mechanical strength, thermal radiation effect and optical effect.
+        I would like to summarize them as one simple python calculator.
+        
+        After that, I will conbine classes into RTlib.py RT's A/I
+        
+        Memo: the unit of strength is MPa.
+        '''
+        self.Quartz = {'ref': 'https://eikoh-kk.co.jp/tecdata/silicaglass_data.html', 
+                       'flexural_strength': 105, 
+                       'tensile_strength' : 48}
+        
+        self.HD30 = {'ref': 'https://www.zotefoams.com/wp-content/uploads/2016/02/HD30-December-2017.pdf',
+                     'tensile_strength': 0.967}
+        
+        self.HDPE ={'ref': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
+                   'tensile_strength': 18.6}
+        
+        self.UHMWPE = {'ref': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
+                      'tensile_strength': 21.4}
+        
+class Strength(Material):
+    def __init__(self):
+        super().__init__()
+        
+    def Thickness(self,r,sigma,P,safety_factor):
+        '''
+        r: radius [mm]
+        sigma: maximum strength [MPa]
+        safety_factor: savety factor
+        P: atmosphere pressure [MPa]
+        
+        return thickness [mm]
+        '''
+        d = r/2*np.sqrt(3*P/(sigma/safety_factor))
+        return d
+
+
 
 class Effective_thickness_lib:
     def __init__(self):
