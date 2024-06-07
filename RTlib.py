@@ -8,7 +8,10 @@ from tqdm.notebook import tqdm            # progress bar (for jupyter, if you us
 import pandas as pd
 import datetime
 import os
-
+import binascii
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.colors import Normalize
+from matplotlib import rcParams
 
 
 class Material:    
@@ -21,22 +24,63 @@ class Material:
         When we consider the thickness, we will care about mechanical strength, thermal radiation effect and optical effect.
         I would like to summarize them as one simple python calculator.
         
-        After that, I will conbine classes into RTlib.py RT's A/I
+        Strength: [MPa]
+        Thermal conductivity: [W/m/K]
         
         Memo: the unit of strength is MPa.
         '''
-        self.Quartz = {'ref': 'https://eikoh-kk.co.jp/tecdata/silicaglass_data.html', 
+        self.Quartz = {'ref_strength': 'https://eikoh-kk.co.jp/tecdata/silicaglass_data.html', 
+                       'ref_thermal_emissivity': 'https://www.thermoworks.com/emissivity-table/',
+                       'ref_thermal_conductivity': 'https://www.maruwa-g.com/products/faq/images/quartz_chara.pdf',
+                       'thermal_emissivity': 0.93, 
+                       'thermal_conductivity': 14e1,
                        'flexural_strength': 105, 
                        'tensile_strength' : 48}
         
-        self.HD30 = {'ref': 'https://www.zotefoams.com/wp-content/uploads/2016/02/HD30-December-2017.pdf',
+        self.HD30 = {'ref_strength': 'https://www.zotefoams.com/wp-content/uploads/2016/02/HD30-December-2017.pdf',
+                     'ref_thermal_conductivity': 'https://www.zotefoams.com/wp-content/uploads/2016/01/TIS07.pdf',
+                     'thermal_emissivitiy':0.99,
+                     'thermal_conductivity': 0.4e1,
                      'tensile_strength': 0.967}
         
-        self.HDPE ={'ref': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
-                   'tensile_strength': 18.6}
+        self.HDPE ={'ref_strength': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
+                    'ref_thermal_emissivity':'https://www.thermoworks.com/emissivity-table/',
+                    'ref_thermal_conductivity': 'https://www.sanplatec.co.jp/html_template/image/pla_busseihyou.pdf',
+                    'thermal_emissivity':0.95,
+                    'thernal_conductivity': 5e1,
+                    'tensile_strength': 18.6}
         
-        self.UHMWPE = {'ref': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
-                      'tensile_strength': 21.4}
+        self.UHMWPE = {'ref_strength': 'https://www.amazon.co.jp/%E3%83%97%E3%83%A9%E3%82%B9%E3%83%81%E3%83%83%E3%82%AF%E3%83%BB%E3%83%87%E3%83%BC%E3%82%BF%E3%83%96%E3%83%83%E3%82%AF-%E6%97%AD%E5%8C%96%E6%88%90%E3%82%A2%E3%83%9F%E3%83%80%E3%82%B9/dp/4769341288',
+                       'ref_thermal_emissivity': 'https://www.sciencedirect.com/science/article/pii/S1350449517307259',
+                       'ref_thermal_conductivity': 'https://jp.misumi-ec.com/fa/fas/rp/data/view_property.php?page=tab2_cate1_03',
+                       'thermal_emissivity': 0.972,
+                       'thermal_conductivity': 4.2e1,
+                       'tensile_strength': 21.4}
+        
+        # heat transfer coefficitent air
+        self.heat_transfer_coefficient_air = 4.64 # [K/m^2/K]
+        # Stefan-Boltzmann constant
+        self.Stefan_Boltzmann_constant = 5.67e-8 # [W/m^2/K^4]
+        
+class Thermal(Material):
+    def __init__(self,material,d,Troom,Tcryo):
+        super().__init__()
+        material_dict = super().__dict__
+        self.d = d
+        self.thermal_conductivity = material_dict[material]['thermal_conductivity']
+        self.thermal_emissivity = material_dict[material]['thermal_emissivity']
+        self.Troom = Troom
+        self.Tcryo = Tcryo
+        
+    def Func(self,t1,t2):
+        f1 = self.thermal_conductivity*(t1-t2)/self.d
+        f2_1 = self.heat_transfer_coefficient_air*(self.Troom-t1)
+        f2_2 = self.thermal_emissivity*self.Stefan_Boltzmann_constant*(self.Troom**4-t1**2)
+        f2_3 = self.heat_transfer_coefficient_air*(t2-self.Tcryo)
+        f2_4 = self.thermal_emissivity*self.Stefan_Boltzmann_constant*(t2**4-self.Tcryo**2)
+        f2 = f2_1 + f2_2 + f2_3 +f2_4
+        return f1 - f2
+        
         
 class Strength(Material):
     def __init__(self):
@@ -53,6 +97,12 @@ class Strength(Material):
         '''
         d = r/2*np.sqrt(3*P/(sigma/safety_factor))
         return d
+    
+    def Thermal_equation(self,T,Tair,Tcryo,lamda,epsilon,alpha,sigma,d):
+        func1 = lamda *(T[1]-T[0])/d
+        func2 = ( alpha*(Tair - T[0]) + epsilon*sigma*(Tair**4 - T[0]**4) ) + ( alpha*(T[1] - Tcryo) + epsilon*sigma*(T[1]**4 - Tcryo**4) )
+        return func1 - func2
+        
 
 
 
@@ -676,7 +726,7 @@ class Transmission_lib:
         freq_comp, refl, trans = self.fit_oblique_basic_multilayer_r_t_incloss(index, losstan, thickness, freq, angle_i, incpol)
         return freq_comp, refl, trans
         
-    def Find_maximum_gamma(self,vc,n0,input_n,P,f_ang_thre,n_select,d_select,n_offset):
+    def Find_maximum_gamma(self,vc,n0,input_n,P,f_ang_thre,n_select,d_select,n_offset,num):
         '''
         * Def name
             Find_maximum_gamma
@@ -782,3 +832,114 @@ class Transmission_lib:
                  input_n = input_n, 
                  input_d = input_d, 
                  trans = trans)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+class VK4_Lib_basic:
+    """
+    This class is written by H. Sakurai
+    """
+    def getscale(self):
+        with open(self.fname, 'rb') as f:
+            header = f.read(264)
+        XY = int(binascii.hexlify(header[252:256][::-1]),16)/1e9
+        Z = int(binascii.hexlify(header[260:264][::-1]),16)/1e9
+        return XY, Z
+
+    def heightviewer(self):
+        with open(self.fname, 'rb') as f:
+            header = f.read(40)
+        with open(self.fname, 'rb') as f:
+            offset = int(binascii.hexlify(header[36:40][::-1]),16)
+            f.seek(offset)
+            pre_data = f.read(28)
+            width = int(binascii.hexlify(pre_data[0:4][::-1]),16)
+            height = int(binascii.hexlify(pre_data[4:8][::-1]),16)
+            databytes = int(int(binascii.hexlify(pre_data[8:12][::-1]),16)/8)
+            totlength = int(binascii.hexlify(pre_data[16:20][::-1]),16)
+            LZWtable = f.read(256*3)
+            data = f.read(width*height*databytes)
+        data_array = np.empty(width*height)
+        for i in range(width*height):
+            data_array[i] = int(binascii.hexlify(data[i*databytes:(i+1)*databytes][::-1]),16)
+        image = np.reshape(data_array,(height,width))
+        return image
+
+class Load_vk4Data_basic(VK4_Lib_basic):
+    def __init__(self,fname):
+        """
+        Added by R. Takaku (U Tokyo)
+        pick up values used only the laoyout
+        """
+        self.fname = fname
+        self.xy_cal = self.getscale()[0]
+        self.Z_cal = self.getscale()[1]
+
+        self.m = self.heightviewer()
+        self.m = (self.m - np.max(self.m))*self.Z_cal
+        
+        self.x_com = len(self.m)
+        self.y_com = len(self.m[0])
+    
+        self.x = np.arange(0,self.x_com*self.xy_cal,self.xy_cal)
+        self.y = np.arange(0,self.y_com*self.xy_cal,self.xy_cal)
+
+        
+
+        
+    def Plot_3D(self,data,figsize, x_1D,y_1D,axis_labelsize, cb_labelsize, plot_labelsize, axis_labelpad, 
+                plot_linewidth, plot_rstride, plot_cstride, plot_alpha, plot_elev, plot_azim,
+                plot_max_aspect, plot_xticks, plot_yticks, plot_zticks, plot_label, cb_zlim, cb_tick_label, cb_shrink, cb_unit, save_filename, dpi):
+        x_mesh,y_mesh = np.meshgrid(y_1D,x_1D)
+        rcParams['axes.labelpad'] = axis_labelpad
+        plt.style.use('dark_background')
+        # Test plot
+        fig = plt.figure(figsize = (figsize[0],figsize[1]))
+        ax = fig.add_subplot(111,projection = "3d")
+        ax.xaxis.pane.set_facecolor("k")
+        ax.yaxis.pane.set_facecolor("k")
+        ax.zaxis.pane.set_facecolor("k")
+        ax.tick_params(labelsize = axis_labelsize)
+
+        ax.set_xlim(0,plot_max_aspect)
+        ax.set_ylim(0,plot_max_aspect)
+        ax.set_zlim(plot_max_aspect,0)
+        ax.set_box_aspect((plot_max_aspect,plot_max_aspect,np.max(data)))
+        ax.view_init(plot_elev, plot_azim)
+
+        ax.set_xticks(plot_xticks)
+        ax.set_yticks(plot_yticks)
+
+        ax.set_zticks(plot_zticks)
+
+        ax.set_xlabel(plot_label[0],fontsize = plot_labelsize)
+        ax.set_ylabel(plot_label[1],fontsize = plot_labelsize)
+
+        surf = ax.plot_surface(x_mesh, y_mesh, data, cmap='jet_r', 
+                               linewidth=plot_linewidth,
+                               rstride=plot_rstride,
+                               cstride=plot_cstride,
+                               alpha=plot_alpha,norm=Normalize(vmin=np.max(data), vmax = np.min(data)))
+
+
+        cb = fig.colorbar(surf,ax = ax,shrink=cb_shrink,ticks=cb_tick_label)
+        cb_ticks_def = cb.get_ticks()
+        cb_ticklabels = [ticklabel.get_text() for ticklabel in cb.ax.get_yticklabels()]
+        cb_ticklabels[-1] += '\n%s'%cb_unit
+
+        cb.set_ticks(cb_ticks_def)
+        cb.set_ticklabels(cb_ticklabels)
+
+        cb.ax.set_ylim(cb_zlim[0],cb_zlim[1])
+        cb.ax.tick_params(labelsize = cb_labelsize)
+
+        fig.tight_layout()
+        plt.savefig(save_filename,dpi = dpi)
